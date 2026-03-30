@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "local-rag-memo"
+version = "1.0.0"
+description = "macOS local RAG-based document Q&A desktop app"
+authors = ["jypark"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+PyQt6 = "^6.6"
+chromadb = "^0.4"
+sentence-transformers = "^2.3"
+pypdf2 = "^3.0"
+pdfminer-six = "^20231228"
+ollama = "^0.1"
+anthropic = "^0.18"
+keyring = "^25.0"
+langchain-text-splitters = "^0.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0"
+pytest-qt = "^4.3"
+pytest-cov = "^4.1"
+black = "^24.0"
+
+[tool.poetry.scripts]
+local-rag-memo = "main:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
