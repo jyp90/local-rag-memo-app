@@ -171,10 +171,12 @@ class MainWindow(QMainWindow):
         # Document panel
         self._document_panel.files_dropped.connect(self._on_files_dropped)
         self._document_panel.document_delete_requested.connect(self._on_delete_document)
+        self._document_panel.tag_edit_requested.connect(self._on_tag_edit)
 
         # Chat panel
         self._chat_panel.question_submitted.connect(self._on_question)
         self._chat_panel.source_clicked.connect(self._on_source_clicked)
+        self._chat_panel.export_requested.connect(self._on_export_conversation)
 
         # Collection panel
         self._collection_panel.collection_changed.connect(self._on_collection_changed)
@@ -248,6 +250,45 @@ class MainWindow(QMainWindow):
             self._status_bar.showMessage("Document deleted", 3000)
         else:
             QMessageBox.warning(self, "Error", "Failed to delete document.")
+
+    def _on_tag_edit(self, doc_id: str, tags: list):
+        """Handle tag save request (F-12)."""
+        self._controller.set_document_tags(doc_id, tags)
+        self._document_panel.update_document_tags(doc_id, tags)
+        self._status_bar.showMessage(f"태그 저장됨: {', '.join(tags) or '없음'}", 3000)
+
+    def _on_export_conversation(self):
+        """F-13: Export current conversation to Markdown file."""
+        messages = self._chat_panel.get_messages_for_export()
+        if not messages:
+            QMessageBox.information(self, "내보내기", "내보낼 대화 내용이 없습니다.")
+            return
+
+        from PyQt6.QtWidgets import QFileDialog
+        import os
+        from datetime import datetime
+
+        default_name = f"conversation_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "대화 내보내기",
+            os.path.join(os.path.expanduser("~"), "Downloads", default_name),
+            "Markdown (*.md);;Text (*.txt);;All Files (*)",
+        )
+        if not path:
+            return
+
+        lines = [f"# 대화 내보내기\n\n> 내보낸 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n---\n"]
+        for msg in messages:
+            role_label = "**You**" if msg["role"] == "user" else "**AI Assistant**"
+            lines.append(f"{role_label}\n\n{msg['content']}\n\n---\n")
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+            self._status_bar.showMessage(f"대화 저장됨: {os.path.basename(path)}", 4000)
+        except OSError as e:
+            QMessageBox.critical(self, "저장 실패", str(e))
 
     def _on_question(self, question: str):
         """Handle user question submission."""

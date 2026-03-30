@@ -26,6 +26,7 @@ class DocumentMeta:
     created_at: str  # ISO format
     file_size: int
     file_type: str  # "pdf" | "md" | "txt"
+    tags: str = "[]"  # JSON array of tag strings e.g. '["python","ML"]'
 
 
 @dataclass
@@ -120,6 +121,10 @@ class DocumentStore:
                     created_at TEXT NOT NULL
                 );
             """)
+            # Migration: add tags column if not exists
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(documents)")]
+            if "tags" not in cols:
+                conn.execute("ALTER TABLE documents ADD COLUMN tags TEXT DEFAULT '[]'")
             conn.commit()
         finally:
             conn.close()
@@ -132,12 +137,44 @@ class DocumentStore:
         try:
             conn.execute(
                 """INSERT OR REPLACE INTO documents
-                   (id, file_name, file_path, collection, chunk_count, created_at, file_size, file_type)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (id, file_name, file_path, collection, chunk_count, created_at, file_size, file_type, tags)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (doc.id, doc.file_name, doc.file_path, doc.collection,
-                 doc.chunk_count, doc.created_at, doc.file_size, doc.file_type),
+                 doc.chunk_count, doc.created_at, doc.file_size, doc.file_type,
+                 doc.tags),
             )
             conn.commit()
+        finally:
+            conn.close()
+
+    def set_document_tags(self, doc_id: str, tags: list[str]) -> None:
+        """Update tags for a document (F-12)."""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE documents SET tags = ? WHERE id = ?",
+                (json.dumps(tags, ensure_ascii=False), doc_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_all_tags(self, collection: str) -> list[str]:
+        """Return sorted unique tag list across all documents in a collection (F-12)."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT tags FROM documents WHERE collection = ?", (collection,)
+            ).fetchall()
+            tags: set[str] = set()
+            for row in rows:
+                try:
+                    for t in json.loads(row[0] or "[]"):
+                        if t:
+                            tags.add(t.strip())
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return sorted(tags)
         finally:
             conn.close()
 

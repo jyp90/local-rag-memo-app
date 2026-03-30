@@ -3,13 +3,15 @@
 Displays documents in the current collection and accepts
 file drops for indexing.
 """
+import json
 import logging
 import os
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QListWidget, QListWidgetItem, QFileDialog,
-    QMessageBox, QMenu,
+    QMessageBox, QMenu, QDialog, QLineEdit, QComboBox,
+    QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QMimeData
 from PyQt6.QtGui import QFont, QDragEnterEvent, QDropEvent, QAction
@@ -24,15 +26,24 @@ class DocumentListItem(QListWidgetItem):
 
     def __init__(self, doc_meta):
         self.doc_meta = doc_meta
-        display = f"{doc_meta.file_name}"
-        size_kb = doc_meta.file_size / 1024
-        if size_kb > 1024:
-            size_str = f"{size_kb / 1024:.1f} MB"
-        else:
-            size_str = f"{size_kb:.0f} KB"
-        display += f"\n  {size_str} | {doc_meta.chunk_count} chunks | {doc_meta.file_type.upper()}"
-        super().__init__(display)
-        self.setToolTip(doc_meta.file_path)
+        super().__init__()
+        self.refresh_display()
+
+    def refresh_display(self):
+        size_kb = self.doc_meta.file_size / 1024
+        size_str = f"{size_kb / 1024:.1f} MB" if size_kb > 1024 else f"{size_kb:.0f} KB"
+        display = (
+            f"{self.doc_meta.file_name}\n"
+            f"  {size_str} | {self.doc_meta.chunk_count} chunks | {self.doc_meta.file_type.upper()}"
+        )
+        try:
+            tags = json.loads(self.doc_meta.tags or "[]")
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+        if tags:
+            display += f"\n  🏷 {' · '.join(tags)}"
+        self.setText(display)
+        self.setToolTip(self.doc_meta.file_path)
 
 
 class DocumentPanel(QWidget):
@@ -47,6 +58,7 @@ class DocumentPanel(QWidget):
     files_dropped = pyqtSignal(list)
     document_delete_requested = pyqtSignal(str)
     add_files_clicked = pyqtSignal()
+    tag_edit_requested = pyqtSignal(str, list)  # doc_id, current_tags
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -73,6 +85,18 @@ class DocumentPanel(QWidget):
         header_layout.addWidget(self._count_label)
 
         layout.addLayout(header_layout)
+
+        # Tag filter (F-12)
+        tag_filter_row = QHBoxLayout()
+        tag_lbl = QLabel("🏷 태그:")
+        tag_lbl.setFixedWidth(42)
+        tag_filter_row.addWidget(tag_lbl)
+        self._tag_filter = QComboBox()
+        self._tag_filter.setObjectName("tagFilter")
+        self._tag_filter.addItem("전체")
+        self._tag_filter.currentTextChanged.connect(self._on_tag_filter_changed)
+        tag_filter_row.addWidget(self._tag_filter, stretch=1)
+        layout.addLayout(tag_filter_row)
 
         # Document list
         self._list_widget = QListWidget()
@@ -113,17 +137,59 @@ class DocumentPanel(QWidget):
         )
 
     def update_documents(self, documents: list):
-        """Refresh the document list.
+        """Refresh the document list with optional tag filter update."""
+        self._all_documents = documents
+        self._refresh_tag_filter(documents)
+        self._apply_tag_filter()
 
-        Args:
-            documents: List of DocumentMeta objects.
-        """
-        self._list_widget.clear()
+    def _refresh_tag_filter(self, documents: list):
+        """Rebuild tag filter combo from current document set."""
+        all_tags: set[str] = set()
         for doc in documents:
-            item = DocumentListItem(doc)
-            self._list_widget.addItem(item)
-        self._count_label.setText(f"{len(documents)} docs")
+            try:
+                for t in json.loads(doc.tags or "[]"):
+                    if t:
+                        all_tags.add(t.strip())
+            except (json.JSONDecodeError, TypeError):
+                pass
+        current = self._tag_filter.currentText()
+        self._tag_filter.blockSignals(True)
+        self._tag_filter.clear()
+        self._tag_filter.addItem("전체")
+        for tag in sorted(all_tags):
+            self._tag_filter.addItem(tag)
+        idx = self._tag_filter.findText(current)
+        self._tag_filter.setCurrentIndex(idx if idx >= 0 else 0)
+        self._tag_filter.blockSignals(False)
+
+    def _apply_tag_filter(self):
+        docs = getattr(self, "_all_documents", [])
+        selected_tag = self._tag_filter.currentText()
+        self._list_widget.clear()
+        for doc in docs:
+            if selected_tag != "전체":
+                try:
+                    tags = json.loads(doc.tags or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    tags = []
+                if selected_tag not in tags:
+                    continue
+            self._list_widget.addItem(DocumentListItem(doc))
+        self._count_label.setText(f"{self._list_widget.count()}/{len(docs)} docs")
         self._delete_btn.setEnabled(False)
+
+    def _on_tag_filter_changed(self, _text: str):
+        self._apply_tag_filter()
+
+    def update_document_tags(self, doc_id: str, tags: list[str]):
+        """Called after tag save to refresh the item display."""
+        for i in range(self._list_widget.count()):
+            item = self._list_widget.item(i)
+            if isinstance(item, DocumentListItem) and item.doc_meta.id == doc_id:
+                import json as _json
+                item.doc_meta.tags = _json.dumps(tags, ensure_ascii=False)
+                item.refresh_display()
+                break
 
     def _on_add_files(self):
         """Open file dialog for adding documents."""
@@ -162,6 +228,13 @@ class DocumentPanel(QWidget):
             return
 
         menu = QMenu(self)
+
+        tag_action = QAction("🏷 태그 편집", self)
+        tag_action.triggered.connect(lambda: self._edit_tags(item))
+        menu.addAction(tag_action)
+
+        menu.addSeparator()
+
         delete_action = QAction("Delete", self)
         delete_action.triggered.connect(lambda: self.document_delete_requested.emit(item.doc_meta.id))
         menu.addAction(delete_action)
@@ -171,6 +244,35 @@ class DocumentPanel(QWidget):
         menu.addAction(info_action)
 
         menu.exec(self._list_widget.mapToGlobal(position))
+
+    def _edit_tags(self, item: "DocumentListItem"):
+        """Show inline tag editor and emit tag_edit_requested."""
+        try:
+            current_tags = json.loads(item.doc_meta.tags or "[]")
+        except (json.JSONDecodeError, TypeError):
+            current_tags = []
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"태그 편집 — {item.doc_meta.file_name}")
+        dlg.setMinimumWidth(360)
+        vlay = QVBoxLayout(dlg)
+
+        vlay.addWidget(QLabel("태그 (쉼표로 구분):"))
+        tag_input = QLineEdit(", ".join(current_tags))
+        tag_input.setPlaceholderText("예: python, ML, 중요")
+        vlay.addWidget(tag_input)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        vlay.addWidget(btns)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            raw = tag_input.text()
+            new_tags = [t.strip() for t in raw.split(",") if t.strip()]
+            self.tag_edit_requested.emit(item.doc_meta.id, new_tags)
 
     def _show_info(self, doc_meta):
         QMessageBox.information(

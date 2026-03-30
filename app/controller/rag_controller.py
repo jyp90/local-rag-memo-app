@@ -292,6 +292,10 @@ class RagController:
         target = collection or self._config.active_collection
         return self._document_store.find_document(target, file_name)
 
+    def set_document_tags(self, doc_id: str, tags: list[str]) -> None:
+        """Save tags for a document (F-12)."""
+        self._document_store.set_document_tags(doc_id, tags)
+
     # --- LLM Backend ---
 
     def switch_llm_backend(self, backend: str):

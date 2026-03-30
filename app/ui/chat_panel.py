@@ -249,6 +249,7 @@ class ChatPanel(QWidget):
 
     question_submitted = pyqtSignal(str)
     source_clicked = pyqtSignal(dict)
+    export_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -282,6 +283,18 @@ class ChatPanel(QWidget):
         self._empty_label.setObjectName("emptyStateLabel")
         self._empty_label.setWordWrap(True)
         self._messages_layout.insertWidget(0, self._empty_label)
+
+        # Toolbar (export button)
+        toolbar = QHBoxLayout()
+        toolbar.setContentsMargins(8, 2, 8, 0)
+        toolbar.addStretch()
+        self._export_btn = QPushButton("내보내기")
+        self._export_btn.setObjectName("exportButton")
+        self._export_btn.setFixedHeight(24)
+        self._export_btn.setToolTip("대화 내용을 Markdown 또는 텍스트 파일로 저장")
+        self._export_btn.clicked.connect(self.export_requested.emit)
+        toolbar.addWidget(self._export_btn)
+        layout.addLayout(toolbar)
 
         # Input area
         self._chat_input = ChatInput()
@@ -353,6 +366,16 @@ class ChatPanel(QWidget):
     def _scroll_to_bottom(self):
         scrollbar = self._scroll_area.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+
+    def get_messages_for_export(self) -> list[dict]:
+        """Return raw message data for export (role + raw_text)."""
+        result = []
+        for bubble in self._messages:
+            result.append({
+                "role": bubble._role,
+                "content": bubble._raw_text,
+            })
+        return result
 
     def load_history(self, messages: list[dict]):
         """Load conversation history into the panel."""
